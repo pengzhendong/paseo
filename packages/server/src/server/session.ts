@@ -176,7 +176,11 @@ import {
 } from "./session/checkout/git-metadata-generator.js";
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
-import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
+import {
+  WorkspaceFilesSession,
+  type WorkspaceFileSystemProvider,
+  type WorkspaceFileSystemResolver,
+} from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
@@ -515,6 +519,7 @@ export interface SessionOptions {
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+    resolveWorkspaceFileSystem?(cwd: string): Promise<WorkspaceFileSystemProvider | null>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
@@ -629,6 +634,13 @@ interface WorkspaceUpdateOptions {
 
 function resolveDirectorySync(service: DirectorySyncService | undefined): DirectorySyncService {
   return service ?? new DirectorySyncService();
+}
+
+function resolveWorkspaceFileSystems(
+  pluginRuntime: SessionOptions["pluginRuntime"],
+): WorkspaceFileSystemResolver | undefined {
+  if (!pluginRuntime?.resolveWorkspaceFileSystem) return undefined;
+  return { resolve: (cwd) => pluginRuntime.resolveWorkspaceFileSystem!(cwd) };
 }
 
 function describeRegistryTransition(record: ArchivedRecordSnapshot | null): RegistryTransition {
@@ -854,6 +866,7 @@ export class Session {
       downloadTokenStore,
       paseoHome,
       logger: this.sessionLogger,
+      fileSystems: resolveWorkspaceFileSystems(pluginRuntime),
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
@@ -2632,6 +2645,8 @@ export class Session {
     switch (msg.type) {
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
+      case "fs.workspace.status.request":
+        return this.workspaceFilesSession.handleWorkspaceFileSystemStatusRequest(msg);
       case "fs.file.subscribe.request":
         return this.workspaceFilesSession.handleFileSubscribeRequest(msg);
       case "fs.file.unsubscribe.request":
